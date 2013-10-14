@@ -2,6 +2,14 @@
 
 #include "gl.h"
 #include "cl.h"
+#include "FreeImage.h"
+
+#include <iostream>
+#include <fstream>
+#include <cstring> // for std::strlen
+#include <cstddef>
+
+using namespace cl;
 
 void glPrintString(void *font, const char *str);
 
@@ -19,6 +27,7 @@ typedef struct Camera_S {
 	cl_float3 norm;
 	cl_float3 left;
 	cl_float3 up;
+	cl_int2 size;
 } Camera;
 
 float dotFloat3(cl_float3 &a, cl_float3 &b);
@@ -30,6 +39,8 @@ cl_float3 addFloat3(cl_float3 &a, cl_float3 &b);
 cl_float3 subFloat3(cl_float3 &a, cl_float3 &b);
 
 cl_float3 multFloat3(cl_float3 &a, cl_float3 &b);
+
+cl_float3 multFloat3(cl_float3 &a, float x, float y, float z);
 
 cl_float3 divFloat3(cl_float3 &a, cl_float3 &b);
 
@@ -60,3 +71,21 @@ void rotZCam(Camera &cam, float z);
 cl_float3 transform(cl_float3 a, float m[3][3]);
 
 void makeLUCam(Camera &cam);
+
+///
+//  Load an image using the FreeImage library and create an OpenCL
+//  image out of it
+//
+Image2D LoadCLImage(Context context, char *fileName);
+
+typedef struct AABB_s {
+	cl_float3 pos;
+	cl_float3 half;
+	cl_int8 child;
+
+	cl_int value;
+} AABB;
+
+void loadVolume(char *fileName, int width, int height, int depth, short ***data, int &min, int &max);
+
+AABB makeAABB(float x, float y, float z, float half, int value);

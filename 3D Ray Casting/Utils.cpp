@@ -56,6 +56,14 @@ cl_float3 multFloat3(cl_float3 &a, cl_float3 &b) {
 	return c;
 }
 
+cl_float3 multFloat3(cl_float3 &a, float x, float y, float z) {
+	cl_float3 c;
+	c.s[0] = a.s[0] * x;
+	c.s[1] = a.s[1] * y;
+	c.s[2] = a.s[2] * z;
+	return c;
+}
+
 cl_float3 divFloat3(cl_float3 &a, cl_float3 &b) {
 	cl_float3 c;
 	c.s[0] = a.s[0] / b.s[0];
@@ -191,4 +199,103 @@ void makeLUCam(Camera &cam) {
 
 	cam.left = scaleFloat3(cam.left, FOV / 1280);
 	cam.up = scaleFloat3(cam.up, FOV / 1280);
+}
+
+///
+//  Load an image using the FreeImage library and create an OpenCL
+//  image out of it
+//
+Image2D LoadCLImage(Context context, char *fileName)
+{
+    FREE_IMAGE_FORMAT format = FreeImage_GetFileType(fileName, 0);
+    FIBITMAP* image = FreeImage_Load(format, fileName);
+
+    // Convert to 32-bit image
+    FIBITMAP* temp = image;
+    image = FreeImage_ConvertTo32Bits(image);
+    FreeImage_Unload(temp);
+
+    int width = FreeImage_GetWidth(image);
+    int height = FreeImage_GetHeight(image);
+
+    char *buffer = new char[width * height * 4];
+    memcpy(buffer, FreeImage_GetBits(image), width * height * 4);
+
+    FreeImage_Unload(image);
+
+    Image2D clImage;
+	
+	try {
+		clImage = Image2D(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, ImageFormat(CL_RGBA, CL_UNORM_INT8), width, height, 0, buffer);
+	} catch (cl::Error e) {
+		
+		return 0;
+	}
+    
+    return clImage;
+}
+
+void loadVolume(char *fileName, int width, int height, int depth, short ***data, int &min, int &max) {
+	
+	std::ifstream inFile;
+	std::size_t size = 0; // here
+
+	inFile.open(fileName, std::ios::in|std::ios::binary|std::ios::ate );
+	char* oData = 0;
+	
+	inFile.seekg(0, std::ios::end); // set the pointer to the end
+	size = inFile.tellg() ; // get the length of the file
+	std::cout << "Size of file: " << size;
+	inFile.seekg(0, std::ios::beg); // set the pointer to the beginning
+
+	oData = new char[ size+1 ]; //  for the '\0'
+	inFile.read( oData, size );
+	oData[size] = '\0' ; // set '\0' 
+	std::cout << " oData size: " << strlen(oData) << "\n";
+
+	short read; 
+	int b1, b2, c = 0;
+	
+	data = new short**[depth];
+
+	for (int s = 0; s < depth; s++) {
+
+		data[s] = new short*[height];
+		
+		for (int v = 0; v < height; v++) {
+
+			data[s][v] = new short[width];
+
+			for (int u = 0; u < width; u++) {
+				
+				b1 = ((int)oData[c]) & 0xff; 
+				b2 = ((int)oData[c+1]) & 0xff; 
+				c += 2;
+
+				read = (short)((b2<<8) | b1);
+
+				data[s][v][u] = read;
+						
+				if (read < min) {
+					min = read;
+				} else if (read > max) {
+					max = read;
+				}
+			}
+		}
+	}
+
+}
+
+AABB makeAABB(float x, float y, float z, float half, int value) {
+	AABB box;
+	setFloat3(box.pos, x,y,z);
+	setFloat3(box.half, half,half,half);
+	box.value = value;
+
+	for (int i = 0; i < 8; i++) {
+		box.child.s[i] = -1;
+	}
+
+	return box;
 }

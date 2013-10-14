@@ -1,29 +1,74 @@
 // #pragma OPENCL EXTENSION cl_amd_printf : enable
 
-__constant float PI = 3.14159f, TOLERANCE = 0.01f;
+#include "kernel.h"
 
-typedef float4 Colour;
+const sampler_t SAMPLER = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP_TO_EDGE | CLK_FILTER_LINEAR;
 
-typedef struct Camera_s {
-	float3 pos;
-	float3 norm;
-	float3 left;
-	float3 up;
-} Camera;
+__kernel void runK(
+	global write_only float  *depthBuf,
+	global write_only float  *colourBuf,
+	global read_only Camera *camera,
+	read_only image2d_t spriteMap
+) {
+	// Get Node Index, Image Size, and Image Pixel
+	int index = get_global_id(0);
+	int indexDepth  = (index * 3) + 2;
+	int indexColour = index * 4;
 
-typedef struct Ray_s {
-	float3 o;
-	float3 d; 
-} Ray;
+	int2 outPixel, outSize = (int2)(1280,720);
+	outPixel.x = index % outSize.x;
+	outPixel.y = (index - outPixel.x) / outSize.x;
 
-int wt(float v, float t) {
-	return (v < t + TOLERANCE && v > t - TOLERANCE) ? 1 : 0;
+	
+	float2 p = (float2)(
+		(0.5f * ((2.0f * (float)outPixel.x) + 1.0f - (float)outSize.x)),
+		(0.5f * ((2.0f * (float)(outSize.y - 1 - outPixel.y)) + 1.0f - (float)outSize.y))
+	);
+
+	Ray ray;
+	ray.d = fast_normalize((*camera).norm + ((*camera).left * p.x) + ((*camera).up * p.y));
+	ray.o = (*camera).pos;
+
+	Colour col = (Colour)(0.0f,0.0f,1.0f,1.0f);
+
+	float3 intersect = (float3)(0.0f,0.0f,0.0f);
+	float2 texCoord  = (float2)(0.0f,0.0f);
+	float dist = 9999;
+	int axis = 0;
+
+	intersectAABB(&ray, (float3)(0.0f,0.0f,0.0f), &dist, &axis, &intersect, &texCoord);
+	intersectAABB(&ray, (float3)(0.0f,1.0f,0.0f), &dist, &axis, &intersect, &texCoord);
+	intersectAABB(&ray, (float3)(0.0f,-1.0f,0.0f), &dist, &axis, &intersect, &texCoord);
+	intersectAABB(&ray, (float3)(1.0f,0.0f,0.0f), &dist, &axis, &intersect, &texCoord);
+	intersectAABB(&ray, (float3)(-1.0f,0.0f,0.0f), &dist, &axis, &intersect, &texCoord);
+	intersectAABB(&ray, (float3)(0.0f,0.0f,1.0f), &dist, &axis, &intersect, &texCoord);
+	intersectAABB(&ray, (float3)(0.0f,0.0f,-1.0f), &dist, &axis, &intersect, &texCoord);
+	
+
+	if (axis != 0) {
+		col = read_imagef( spriteMap, SAMPLER, (texCoord * 64) + ((float2)((abs(axis) - 1) * 64 , 0.0f)) );
+	}
+
+	/*if (axis != 0 && (((int)(texCoord.x * 100) % 10 == 0) || ((int)(texCoord.y * 100) % 10 == 0))) {
+		col *= INVERT;
+		col += 1.0f;
+	}*/
+
+	// Write to image
+	colourBuf[indexColour] = col.x;
+	colourBuf[indexColour+1] = col.y;
+	colourBuf[indexColour+2] = col.z;
+	colourBuf[indexColour+3] = col.w;
+	depthBuf[indexDepth] = dist;
 }
 
 int intersectAABB(
 	Ray *ray, 
 	float3 centre, 
-	float *dist
+	float *dist,
+	int *axis, 
+	float3 *intersect,
+	float2 *texCoord
 ) {
 	float3 dirFrac, t0,t1, v0,v1;
 	float tmin,tmax;
@@ -49,120 +94,51 @@ int intersectAABB(
 		return -3;
 	}
 
-	float3 intersect = (*ray).o + ((*ray).d * tmin);
-	int axis = 1;
-
-	float delta  = fabs(intersect.x - v0.x);
-	float deltab = fabs(intersect.x - v1.x) ;
-	if (deltab < delta) {
-		axis = 1;
-		delta = deltab;
+	if (tmin > *dist) {
+		return -4;
 	}
-
-	deltab = fabs(intersect.y - v0.y) ;
-	if (deltab < delta) {
-		axis = 2;
-		delta = deltab;
-	}
-
-	deltab = fabs(intersect.y - v1.y) ;
-	if (deltab < delta) {
-		axis = 2;
-		delta = deltab;
-	}
-
-	deltab = fabs(intersect.z - v0.z) ;
-	if (deltab < delta) {
-		axis = 3;
-		delta = deltab;
-	}
-
-	deltab = fabs(intersect.z - v1.z) ;
-	if (deltab < delta) {
-		axis = 3;
-		delta = deltab;
-	}
-
 	*dist = tmin;
-	return axis;
-}
 
-__kernel void runK(
-	write_only image2d_t outImage,
-	global read_only Camera *camera
-) {
-	// Get Node Index, Image Size, and Image Pixel
-	int index = get_global_id(0);
-	int2 outPixel, outSize = get_image_dim(outImage);
-	outPixel.x = index % outSize.x;
-	outPixel.y = (index - outPixel.x) / outSize.x;
+	*intersect = (*ray).o + ((*ray).d * tmin);
+	float3 p = (*intersect) - v0;
 
-	
-	float2 p = (float2)(
-		(0.5f * ((2.0f * (float)outPixel.x) + 1.0f - (float)outSize.x)),
-		(0.5f * ((2.0f * (float)outPixel.y) + 1.0f - (float)outSize.y))
-	);
+	*axis = X_AXIS;
+	*texCoord = (float2)(p.z, p.y);
 
-	Ray ray;
-	ray.d = fast_normalize((*camera).norm + ((*camera).left * p.x) + ((*camera).up * p.y));
-	ray.o = (*camera).pos;
-
-	Colour col = (Colour)(0.0f,0.0f,1.0f,1.0f);
-
-	float d0 = 9999999, d1;
-	int a0 = 0, a1;
-
-	a0 = intersectAABB(&ray, (float3)(0.0f,0.0f,0.0f), &d0);
-	
-	a1 = intersectAABB(&ray, (float3)(0.0f,1.0f,0.0f), &d1);
-	if (d1 < d0) {
-		d0 = d1;
-		a0 = a1;
+	float delta  = fabs((*intersect).x - v0.x);
+	float deltab = fabs((*intersect).x - v1.x) ;
+	if (deltab < delta) {
+		*axis = -X_AXIS;
+		*texCoord = (float2)(p.z, p.y);
+		delta = deltab;
 	}
 
-	a1 = intersectAABB(&ray, (float3)(0.0f,-1.0f,0.0f), &d1);
-	if (d1 < d0) {
-		d0 = d1;
-		a0 = a1;
+	deltab = fabs((*intersect).y - v0.y) ;
+	if (deltab < delta) {
+		*axis = Y_AXIS;
+		*texCoord = (float2)(p.x, p.z);
+		delta = deltab;
 	}
 
-	a1 = intersectAABB(&ray, (float3)(1.0f,0.0f,0.0f), &d1);
-	if (d1 < d0) {
-		d0 = d1;
-		a0 = a1;
+	deltab = fabs((*intersect).y - v1.y) ;
+	if (deltab < delta) {
+		*axis = -Y_AXIS;
+		*texCoord = (float2)(p.x, p.z);
+		delta = deltab;
 	}
 
-	a1 = intersectAABB(&ray, (float3)(-1.0f,0.0f,0.0f), &d1);
-	if (d1 < d0) {
-		d0 = d1;
-		a0 = a1;
+	deltab = fabs((*intersect).z - v0.z) ;
+	if (deltab < delta) {
+		*axis = Z_AXIS;
+		*texCoord = (float2)(p.x, p.y);
+		delta = deltab;
 	}
 
-	a1 = intersectAABB(&ray, (float3)(0.0f,0.0f,1.0f), &d1);
-	if (d1 < d0) {
-		d0 = d1;
-		a0 = a1;
+	deltab = fabs((*intersect).z - v1.z) ;
+	if (deltab < delta) {
+		*axis = -Z_AXIS;
+		*texCoord = (float2)(p.x, p.y);
 	}
 
-	a1 = intersectAABB(&ray, (float3)(0.0f,0.0f,-1.0f), &d1);
-	if (d1 < d0) {
-		d0 = d1;
-		a0 = a1;
-	}
-
-	switch (a0) {
-	case 1:
-		col = (Colour)(1.0f,0.0f,0.0f,1.0f);
-		break;
-	case 2:
-		col = (Colour)(0.0f,1.0f,0.0f,1.0f);
-		break;
-	case 3:
-		col = (Colour)(0.5f,0.0f,1.0f,1.0f);
-		break;
-	}
-
-	// Write to image
-	outPixel.y = outSize.y - 1 - outPixel.y;
-	write_imagef(outImage, outPixel, col);
+	return 1;
 }

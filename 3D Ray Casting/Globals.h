@@ -14,5 +14,10 @@
 // Your headers go here!
 #include "CLArray.h"
 
+#include "FreeImage.h"
+
 #include "Utils.h"
 #include "Math_Func.h"
+
+
+

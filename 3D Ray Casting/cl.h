@@ -3,3 +3,5 @@
 #define __CL_ENABLE_EXCEPTIONS
 #include <CL/cl.hpp>
 #include "clErr.h"
+
+//#include "SOIL.h"
